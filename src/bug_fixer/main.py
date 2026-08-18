@@ -3,6 +3,13 @@ import argparse
 import os
 import sys
 
+# Ensure UTF-8 output on Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Ensure src directory is on sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 

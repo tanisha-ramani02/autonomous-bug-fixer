@@ -27,13 +27,15 @@ class TestRunner:
     def _run_pytest(self, extra_args: List[str]) -> TestSuiteReport:
         """Invoke pytest via subprocess in the target repository directory."""
         cmd = ["uv", "run", "pytest", "-v", "--tb=short"] + extra_args
-        logger.debug(f"Running test command in {self.repo_path}: {' '.join(cmd)}")
+        sub_env = os.environ.copy()
+        sub_env.pop("VIRTUAL_ENV", None)
         
         start_time = time.time()
         try:
             process = subprocess.run(
                 cmd,
                 cwd=self.repo_path,
+                env=sub_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

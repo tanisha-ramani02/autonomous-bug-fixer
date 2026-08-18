@@ -18,28 +18,28 @@ class Verifier:
         """
         Two-stage verification:
         Stage 1: Verify the targeted failing test now passes.
-        Stage 2: Run full test suite to ensure 0 regressions.
+        Stage 2: Run full test suite to ensure 0 regressions on previously passing tests.
 
-        Returns: (target_passed, full_passed, regressions, full_report, error_message)
+        Returns: (target_passed, no_regressions, regressions, full_report, error_message)
         """
         # 1. Run targeted test
         target_report = self.runner.run_single_test(target_test_id)
         target_passed = (target_report.failed == 0 and target_report.errors == 0 and target_report.passed > 0)
         
         if not target_passed:
-            err_msg = target_report.stderr or target_report.stdout
-            return False, False, [], target_report, f"Target test still fails: {err_msg[:400]}"
+            err_msg = target_report.stdout or target_report.stderr
+            return False, False, [], target_report, f"Target test still fails: {err_msg[-400:].strip()}"
 
-        # 2. Run full suite to check for regressions
+        # 2. Run full suite to check for regressions on previously passing tests
         full_report = self.runner.run_all_tests()
         
         # Check if any previously passing test is now failing
         current_failed_ids = [r.test_id for r in full_report.results if r.status in ["failed", "error"]]
         regressions = [tid for tid in current_failed_ids if tid in initial_passing_tests]
 
-        full_passed = (len(regressions) == 0 and full_report.failed == 0)
+        no_regressions = (len(regressions) == 0)
         err_msg = None
-        if regressions:
+        if not no_regressions:
             err_msg = f"Regressions detected in previously passing tests: {', '.join(regressions)}"
 
-        return target_passed, full_passed, regressions, full_report, err_msg
+        return target_passed, no_regressions, regressions, full_report, err_msg

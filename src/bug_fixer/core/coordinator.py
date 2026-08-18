@@ -177,7 +177,7 @@ class Coordinator:
                 self.logger.log_patch_candidate(patch, diff_str)
 
                 # F. Verify Patch (Dual-Stage)
-                target_pass, full_pass, regressions, report, err_msg = self.verifier.verify_patch(
+                target_pass, no_regressions, regressions, report, err_msg = self.verifier.verify_patch(
                     target_test_id=failure.test_id,
                     initial_passing_tests=initial_passing_ids
                 )
@@ -188,14 +188,14 @@ class Coordinator:
                     diagnosis=diagnosis,
                     patch=patch,
                     target_test_passed=target_pass,
-                    full_suite_passed=full_pass,
+                    full_suite_passed=no_regressions,
                     regressions=regressions,
                     error_message=err_msg
                 )
                 trace.attempts.append(attempt_record)
                 self.logger.log_attempt_result(attempt_record)
 
-                if target_pass and full_pass:
+                if target_pass and no_regressions:
                     # Fix succeeded without regressions!
                     bug_resolved = True
                     resolved_count += 1
@@ -213,7 +213,7 @@ class Coordinator:
                         self.patcher.restore_backup(patch.target_file)
 
                     prior_attempts_summary.append(
-                        f"Attempt {attempt_num} Failed: target_passed={target_pass}, full_passed={full_pass}, error={err_msg}"
+                        f"Attempt {attempt_num} Failed: target_passed={target_pass}, no_regressions={no_regressions}, error={err_msg}"
                     )
 
             if not bug_resolved:

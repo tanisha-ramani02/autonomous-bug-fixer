@@ -8,8 +8,8 @@ DIAGNOSIS_SYSTEM_PROMPT = """You are an expert Python Diagnostician and Software
 Your task is to analyze failing pytest test outputs, stacktraces, and target source code to identify the exact root cause of a software bug.
 
 Strict Guidelines:
-1. Do NOT guess blindly. Base your diagnosis strictly on the stacktrace, assertion message, and code context.
-2. Identify the EXACT file (e.g. app/services/catalog.py) and function/class where the bug is planted.
+1. Do NOT invent non-existent file names. Choose the root cause file strictly from the 'Available Project Files' or 'Suspected Source Files'.
+2. Identify the EXACT file (e.g. app/api/routes/search.py or app/schemas.py) and function/class where the bug is planted.
 3. Formulate a clear, actionable fix strategy that will resolve the failing test without breaking any existing functionality.
 4. Output your response strictly in the requested JSON format.
 """
@@ -35,6 +35,9 @@ DIAGNOSIS_USER_PROMPT = """Analyze the following test failure and repository con
 ### Suspected Source Files in Repository:
 {source_files_context}
 
+### All Available Files in Repository:
+{available_files}
+
 ### Prior Failed Attempts for this Bug (if any):
 {prior_attempts}
 
@@ -42,7 +45,7 @@ Output a JSON object with EXACTLY the following structure:
 ```json
 {{
     "hypothesis": "Concise summary of the root cause flaw",
-    "root_cause_file": "relative/path/to/buggy_file.py",
+    "root_cause_file": "relative/path/to/real_existing_file.py",
     "root_cause_symbol": "function_or_class_name",
     "line_range": "approximate line range like 10-25",
     "explanation": "Detailed explanation of why the failure occurs",
@@ -72,6 +75,7 @@ class Diagnostician:
             source_context_parts.append(f"--- File: {file_path} ---\n{content}\n")
         
         sources_str = "\n".join(source_context_parts) if source_context_parts else "No specific source file identified in traceback."
+        avail_files_str = "\n".join(f"- {f}" for f in code_context.get("available_files", []))
 
         prompt = DIAGNOSIS_USER_PROMPT.format(
             test_id=failure.test_id,
@@ -79,6 +83,7 @@ class Diagnostician:
             traceback=failure.traceback or "No traceback",
             test_code=code_context.get("test_code", "Not available")[:2500],
             source_files_context=sources_str[:6000],
+            available_files=avail_files_str[:2000],
             prior_attempts=prior_attempts_info
         )
 

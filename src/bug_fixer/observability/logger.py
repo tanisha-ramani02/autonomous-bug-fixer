@@ -1,4 +1,5 @@
-"""Observability logger combining Rich live terminal UI and Loguru file persistence."""
+"""Observability logger combining Rich live terminal UI and Loguru file persistence with safe Windows encoding."""
+import sys
 from typing import Optional, List
 from rich.console import Console
 from rich.panel import Panel
@@ -8,7 +9,14 @@ from rich.text import Text
 from bug_fixer.config.logger_config import logger
 from bug_fixer.models.state import TestSuiteReport, RootCauseAnalysis, PatchCandidate, FixAttempt, TokenCostSummary
 
-console = Console()
+# Reconfigure stdout for utf-8 on Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+console = Console(force_terminal=True, soft_wrap=True)
 
 
 class AgentLogger:
@@ -26,7 +34,7 @@ class AgentLogger:
             f"[bold cyan]Autonomous Bug Fixer Agent[/bold cyan]\n"
             f"[bold]Target Repository:[/bold] [yellow]{repo_path}[/yellow]\n"
             f"[bold]LLM Provider:[/bold] [green]{provider}[/green] | [bold]Budget:[/bold] [green]${budget:.2f}[/green]",
-            title="🚀 INITIALIZATION",
+            title="INITIALIZATION",
             border_style="cyan"
         ))
 
@@ -70,7 +78,7 @@ class AgentLogger:
         text.append(f"Hypothesis: {diagnosis.hypothesis}\n", style="yellow")
         text.append(f"Strategy: {diagnosis.proposed_strategy}", style="italic")
         
-        console.print(Panel(text, title="🧠 ROOT CAUSE DIAGNOSIS", border_style="yellow"))
+        console.print(Panel(text, title="ROOT CAUSE DIAGNOSIS", border_style="yellow"))
 
     def log_patch_candidate(self, patch: PatchCandidate, diff: Optional[str] = None):
         """Display and log patch candidate."""
@@ -87,18 +95,18 @@ class AgentLogger:
         """Display and log outcome of a fix attempt."""
         if attempt.target_test_passed and attempt.full_suite_passed:
             logger.info(f"Fix attempt {attempt.attempt_number} for {attempt.bug_id} SUCCEEDED. 0 regressions.")
-            console.print(f"[bold green]✔ Patch Verified![/bold green] Target test passed with 0 regressions.")
+            console.print(f"[bold green][PASS] Patch Verified![/bold green] Target test passed with 0 regressions.")
         elif attempt.target_test_passed and not attempt.full_suite_passed:
             logger.warning(f"Fix attempt {attempt.attempt_number} for {attempt.bug_id} caused regressions: {attempt.regressions}")
-            console.print(f"[bold red]✘ Regression Detected![/bold red] Regressions: {attempt.regressions}")
+            console.print(f"[bold red][REGRESSION] Regression Detected![/bold red] Regressions: {attempt.regressions}")
         else:
             logger.warning(f"Fix attempt {attempt.attempt_number} for {attempt.bug_id} FAILED: {attempt.error_message}")
-            console.print(f"[bold red]✘ Fix Failed:[/bold red] {attempt.error_message}")
+            console.print(f"[bold red][FAIL] Fix Failed:[/bold red] {attempt.error_message}")
 
     def log_rollback(self, reason: str):
         """Display and log rollback event."""
         logger.info(f"Executing rollback: {reason}")
-        console.print(f"[bold magenta]↺ Rolling back changes...[/bold magenta] Reason: {reason}")
+        console.print(f"[bold magenta][ROLLBACK] Rolling back changes...[/bold magenta] Reason: {reason}")
 
     def log_summary(self, initial_failed: int, resolved: int, unresolved: int, token_summary: TokenCostSummary, duration: float):
         """Display and log final run summary table."""
@@ -108,7 +116,7 @@ class AgentLogger:
         )
         
         console.print()
-        table = Table(title="🏁 EXECUTION SUMMARY & AUDIT", border_style="green")
+        table = Table(title="EXECUTION SUMMARY & AUDIT", border_style="green")
         table.add_column("Metric", style="bold")
         table.add_column("Value", style="cyan")
 
