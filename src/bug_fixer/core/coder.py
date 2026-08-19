@@ -11,7 +11,8 @@ Rules:
 1. Make the MINIMAL change necessary to fix the bug and satisfy API contracts.
 2. Preserve existing variable names, function signatures, and unrelated behavior.
 3. Ensure the replacement snippet is valid Python syntax and exact match to the original code in the file.
-4. Output your response strictly in the requested JSON format.
+4. For dictionary keys (e.g. headers, addresses), support standard casing robustly (e.g. check both "Authorization" and "authorization", or use case-insensitive dict lookup).
+5. Output your response strictly in the requested JSON format.
 """
 
 CODER_USER_PROMPT = """You need to patch the file `{target_file}` to fix the following diagnosed issue:
