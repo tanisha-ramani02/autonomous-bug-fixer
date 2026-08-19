@@ -23,6 +23,9 @@ CODER_USER_PROMPT = """You need to patch the file `{target_file}` to fix the fol
 - **Explanation**: {explanation}
 - **Proposed Strategy**: {proposed_strategy}
 
+### Failing Test & Assertion Context:
+{test_context}
+
 ### Current Full Content of `{target_file}`:
 ```python
 {file_content}
@@ -57,14 +60,16 @@ class Coder:
         self,
         diagnosis: RootCauseAnalysis,
         target_file_content: str,
-        prior_attempts_info: str = "None"
+        prior_attempts_info: str = "None",
+        test_context_info: str = "None"
     ) -> PatchCandidate:
-        """Generate a PatchCandidate based on the diagnosis and current file content."""
+        """Generate a PatchCandidate based on the diagnosis, test assertions, and current file content."""
         prompt = CODER_USER_PROMPT.format(
             target_file=diagnosis.root_cause_file,
             hypothesis=diagnosis.hypothesis,
             explanation=diagnosis.explanation,
             proposed_strategy=diagnosis.proposed_strategy,
+            test_context=test_context_info,
             file_content=target_file_content,
             prior_attempts=prior_attempts_info
         )
