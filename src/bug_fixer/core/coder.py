@@ -12,7 +12,8 @@ Rules:
 2. Preserve existing variable names, function signatures, and unrelated behavior.
 3. Ensure the replacement snippet is valid Python syntax and exact match to the original code in the file.
 4. For dictionary keys (e.g. headers, addresses), support standard casing robustly (e.g. check both "Authorization" and "authorization", or use case-insensitive dict lookup).
-5. Output your response strictly in the requested JSON format.
+5. If the failure is an AssertionError comparing specific string constants (e.g. CORS headers, status messages, JSON keys), ensure the replacement precisely matches the expected contract value.
+6. Output your response strictly in the requested JSON format.
 """
 
 CODER_USER_PROMPT = """You need to patch the file `{target_file}` to fix the following diagnosed issue:
