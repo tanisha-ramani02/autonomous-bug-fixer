@@ -9,6 +9,8 @@ from bug_fixer.config.logger_config import logger
 from bug_fixer.models.state import TokenCostSummary
 
 
+import random
+
 # Model pricing in USD per 1M tokens
 MODEL_PRICING = {
     # Gemini models
@@ -33,13 +35,56 @@ GEMINI_FALLBACK_MODELS = [
 ]
 
 
+class CircuitBreaker:
+    """
+    Enterprise Circuit Breaker Pattern (CLOSED -> OPEN -> HALF_OPEN).
+    Protects the agent against cascading upstream provider outages and rate-limit loops.
+    """
+    CLOSED = "CLOSED"
+    OPEN = "OPEN"
+    HALF_OPEN = "HALF_OPEN"
+
+    def __init__(self, failure_threshold: int = 4, recovery_timeout: float = 20.0):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.state = self.CLOSED
+        self.failure_count = 0
+        self.last_failure_time = 0.0
+
+    def record_success(self):
+        """Reset circuit to CLOSED state on successful request."""
+        self.failure_count = 0
+        self.state = self.CLOSED
+
+    def record_failure(self):
+        """Record failure and trip to OPEN state if threshold exceeded."""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.failure_threshold:
+            self.state = self.OPEN
+            logger.warning(f"[CIRCUIT BREAKER] State -> OPEN (Threshold {self.failure_threshold} reached). Short-circuiting.")
+
+    def allow_request(self) -> bool:
+        """Check if request is permitted under circuit breaker state."""
+        if self.state == self.CLOSED:
+            return True
+        if self.state == self.OPEN:
+            if time.time() - self.last_failure_time > self.recovery_timeout:
+                self.state = self.HALF_OPEN
+                logger.info("[CIRCUIT BREAKER] State -> HALF_OPEN (Probing provider recovery).")
+                return True
+            return False
+        return True
+
+
 class LLMClient:
-    """Unified client handling Gemini and Groq API requests with failover key rotation and model fallback."""
+    """Unified client handling Gemini and Groq API requests with failover key rotation, circuit breaker, and model fallback."""
 
     def __init__(self):
         self.tracker = TokenCostSummary()
         self.gemini_keys = settings.get_gemini_keys()
         self.groq_keys = settings.get_groq_keys()
+        self.circuit_breaker = CircuitBreaker()
         self._gemini_key_idx = 0
         self._groq_key_idx = 0
 
@@ -130,6 +175,7 @@ class LLMClient:
                 try:
                     response = requests.post(url, json=payload, timeout=18)
                     if response.status_code == 200:
+                        self.circuit_breaker.record_success()
                         data = response.json()
                         candidate = data["candidates"][0]
                         text_out = candidate["content"]["parts"][0]["text"]
@@ -143,15 +189,26 @@ class LLMClient:
                         self.tracker.add_usage(prompt_tokens, comp_tokens, cost)
                         logger.debug(f"Gemini response received ({candidate_model}): {prompt_tokens} prompt / {comp_tokens} comp tokens (${cost:.5f})")
                         return text_out
-                    else:
-                        last_error = f"Gemini HTTP {response.status_code}: {response.text[:200]}"
-                        logger.warning(f"Gemini API returned {response.status_code} for {candidate_model}. Trying next...")
+                    elif response.status_code in [429, 500, 503]:
+                        self.circuit_breaker.record_failure()
+                        last_error = f"HTTP {response.status_code}: {response.text[:120]}"
+                        logger.warning(f"Gemini {candidate_model} Key #{self._gemini_key_idx} hit {response.status_code}. Backing off and rotating key...")
+                        time.sleep(random.uniform(0.3, 0.8))
                         self._gemini_key_idx = (self._gemini_key_idx + 1) % len(self.gemini_keys)
+                        continue
+                    else:
+                        self.circuit_breaker.record_failure()
+                        last_error = f"HTTP {response.status_code}: {response.text[:150]}"
+                        logger.warning(f"Gemini API returned {response.status_code} for {candidate_model}")
+                        self._gemini_key_idx = (self._gemini_key_idx + 1) % len(self.gemini_keys)
+                        break
                 except requests.exceptions.Timeout:
+                    self.circuit_breaker.record_failure()
                     last_error = f"Gemini request timed out after 18s for {candidate_model}"
                     logger.warning(last_error)
                     self._gemini_key_idx = (self._gemini_key_idx + 1) % len(self.gemini_keys)
                 except Exception as e:
+                    self.circuit_breaker.record_failure()
                     last_error = str(e)
                     logger.warning(f"Gemini exception: {e}")
                     self._gemini_key_idx = (self._gemini_key_idx + 1) % len(self.gemini_keys)
@@ -194,6 +251,7 @@ class LLMClient:
             try:
                 response = requests.post(url, json=payload, headers=headers, timeout=20)
                 if response.status_code == 200:
+                    self.circuit_breaker.record_success()
                     data = response.json()
                     text_out = data["choices"][0]["message"]["content"]
 
@@ -206,12 +264,15 @@ class LLMClient:
                     logger.debug(f"Groq response received ({model}): {prompt_tokens} prompt / {comp_tokens} comp tokens (${cost:.5f})")
                     return text_out
                 else:
+                    self.circuit_breaker.record_failure()
                     last_error = f"Groq HTTP {response.status_code}: {response.text[:200]}"
-                    logger.warning(f"Groq API returned {response.status_code}. Rotating key...")
+                    logger.warning(f"Groq API returned {response.status_code}. Backing off and rotating key...")
+                    time.sleep(random.uniform(0.3, 0.8))
                     self._groq_key_idx = (self._groq_key_idx + 1) % len(self.groq_keys)
             except Exception as e:
+                self.circuit_breaker.record_failure()
                 last_error = str(e)
-                logger.warning(f"Groq request exception: {e}. Rotating key...")
+                logger.warning(f"Groq request exception on key #{self._groq_key_idx}: {e}")
                 self._groq_key_idx = (self._groq_key_idx + 1) % len(self.groq_keys)
 
         raise RuntimeError(f"All Groq keys failed. Last error: {last_error}")
