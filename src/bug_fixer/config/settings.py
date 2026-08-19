@@ -16,11 +16,13 @@ class Settings(BaseSettings):
     google_api_key1: Optional[str] = Field(default=None, validation_alias="GOOGLE_API_KEY1")
     google_api_key2: Optional[str] = Field(default=None, validation_alias="GOOGLE_API_KEY2")
     google_api_key3: Optional[str] = Field(default=None, validation_alias="GOOGLE_API_KEY3")
+    gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
 
     # Groq Keys
     groq_api_key1: Optional[str] = Field(default=None, validation_alias="GROQ_API_KEY1")
     groq_api_key2: Optional[str] = Field(default=None, validation_alias="GROQ_API_KEY2")
     groq_api_key3: Optional[str] = Field(default=None, validation_alias="GROQ_API_KEY3")
+    groq_api_key: Optional[str] = Field(default=None, validation_alias="GROQ_API_KEY")
 
     # Model Names
     gemini_model1: str = Field(default="gemini-flash-latest", validation_alias="GEMINI_MODEL1")
@@ -39,16 +41,16 @@ class Settings(BaseSettings):
     def get_gemini_keys(self) -> List[str]:
         """Return all non-empty Gemini keys."""
         keys = []
-        for k in [self.google_api_key1, self.google_api_key2, self.google_api_key3]:
-            if k and k.strip():
+        for k in [self.google_api_key1, self.gemini_api_key, self.google_api_key2, self.google_api_key3]:
+            if k and k.strip() and k.strip() not in keys:
                 keys.append(k.strip())
         return keys
 
     def get_groq_keys(self) -> List[str]:
         """Return all non-empty Groq keys."""
         keys = []
-        for k in [self.groq_api_key1, self.groq_api_key2, self.groq_api_key3]:
-            if k and k.strip():
+        for k in [self.groq_api_key1, self.groq_api_key, self.groq_api_key2, self.groq_api_key3]:
+            if k and k.strip() and k.strip() not in keys:
                 keys.append(k.strip())
         return keys
 

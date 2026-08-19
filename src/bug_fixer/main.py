@@ -36,6 +36,12 @@ def parse_args():
         help="LLM provider to use (default: gemini)."
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Specific model to use (e.g. gemini-flash-latest, llama-3.3-70b-versatile)."
+    )
+    parser.add_argument(
         "--budget",
         type=float,
         default=settings.max_cost_budget_usd,
@@ -63,6 +69,12 @@ def main():
     if not os.path.exists(target_repo):
         print(f"Error: Target repository path does not exist: {target_repo}", file=sys.stderr)
         sys.exit(1)
+
+    if args.model:
+        if args.provider == "groq":
+            settings.groq_model1 = args.model
+        else:
+            settings.gemini_model1 = args.model
 
     # Initialize log directory
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")

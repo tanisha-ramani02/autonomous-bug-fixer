@@ -98,7 +98,7 @@ An autonomous, closed-loop software engineering system engineered to observe fai
 - **Dual-Stage Canary & Regression Verification**: Fixes are verified in 2 stages: Stage 1 tests the targeted failure, and Stage 2 runs the complete test suite. If any previously passing test regresses, an atomic Git rollback is executed immediately.
 - **Multi-Pass Convergence Loop (`max_cycles=3`)**: Resolves cross-file and interdependent bugs automatically across multiple passes.
 - **Sub-Cent Cost Economics**: Intelligent AST function slicing reduces prompt token volume by >90%, resolving 100 enterprise test cases for under **$0.03 USD** (well below the $5.00 limit).
-- **Multi-Model & Multi-Provider Gateway**: Native support for Google Gemini, OpenAI, Anthropic, Groq, and OpenRouter with automatic key rotation and circuit breakers.
+- **Multi-Model & Multi-Key Engine**: Battle-tested native support for Google Gemini (`gemini-flash-latest`, `gemini-2.5-flash`, `gemini-3.1-flash-lite`) and Groq (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`) with automated multi-key rotation, model fallback sequences, and circuit breaker protection.
 - **Secret Sanitization**: Regex filter automatically masks API keys (`AIzaSy...`, `sk-...`, `Bearer ...`) from all console outputs and trace files.
 - **Zero-Hardcoding Dynamic Discovery**: Completely generalized; operates dynamically without any hardcoded rules, precomputed diffs, or hint comments.
 
@@ -148,22 +148,19 @@ source .venv/bin/activate
 Create a `.env` file in the root of `autonomous-bug-fixer/`:
 
 ```env
-# Supported LLM Providers (Configure at least one)
+# Google Gemini Configuration (Supported & Battle-Tested)
+GOOGLE_API_KEY1=your_primary_gemini_api_key
+GOOGLE_API_KEY2=optional_backup_gemini_key_for_rotation
 GEMINI_API_KEY=your_gemini_api_key
-# Backup Gemini Keys for automated key rotation (Optional)
-GOOGLE_API_KEY1=your_primary_gemini_key
-GOOGLE_API_KEY2=your_backup_gemini_key
 
-# Alternative Providers (Optional)
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GROQ_API_KEY=gsk_...
-OPENROUTER_API_KEY=sk-or-...
+# Groq Configuration (Supported & Battle-Tested)
+GROQ_API_KEY1=your_groq_api_key
 
 # Model Selection
-PRIMARY_MODEL=gemini-flash-latest
-FAST_MODEL=gemini-flash-latest
-PRIMARY_PROVIDER=gemini              # gemini | openai | groq | openrouter
+GEMINI_MODEL1=gemini-flash-latest
+GEMINI_MODEL2=gemini-2.5-flash
+GROQ_MODEL1=llama-3.3-70b-versatile
+PRIMARY_PROVIDER=gemini              # gemini | groq
 
 # Safety & Limits
 MAX_ATTEMPTS_PER_BUG=3
