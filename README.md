@@ -98,7 +98,7 @@ An autonomous, closed-loop software engineering system engineered to observe fai
 - **Dual-Stage Canary & Regression Verification**: Fixes are verified in 2 stages: Stage 1 tests the targeted failure, and Stage 2 runs the complete test suite. If any previously passing test regresses, an atomic Git rollback is executed immediately.
 - **Multi-Pass Convergence Loop (`max_cycles=3`)**: Resolves cross-file and interdependent bugs automatically across multiple passes.
 - **Sub-Cent Cost Economics**: Intelligent AST function slicing reduces prompt token volume by >90%, resolving 100 enterprise test cases for under **$0.03 USD** (well below the $5.00 limit).
-- **Multi-Model & Multi-Key Engine**: Battle-tested native support for Google Gemini (`gemini-flash-latest`, `gemini-2.5-flash`, `gemini-3.1-flash-lite`) and Groq (`llama-3.3-70b-versatile`, `llama-3.1-8b-instant`) with automated multi-key rotation, model fallback sequences, and circuit breaker protection.
+- **Multi-Tier Provider Failover Chain & Key Rotation**: Battle-tested native support across Google Gemini (`gemini-flash-latest`, `gemini-2.5-flash`), Groq (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`), OpenAI (`gpt-4o`, `gpt-4o-mini`), and Anthropic (`claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`). The agent rotates across all configured keys per provider before seamlessly failing over to the next provider in the chain.
 - **Secret Sanitization**: Regex filter automatically masks API keys (`AIzaSy...`, `sk-...`, `Bearer ...`) from all console outputs and trace files.
 - **Zero-Hardcoding Dynamic Discovery**: Completely generalized; operates dynamically without any hardcoded rules, precomputed diffs, or hint comments.
 
@@ -148,21 +148,50 @@ source .venv/bin/activate
 Create a `.env` file in the root of `autonomous-bug-fixer/`:
 
 ```env
-# Google Gemini Configuration (Supported & Battle-Tested)
-GOOGLE_API_KEY1=your_primary_gemini_api_key
-GOOGLE_API_KEY2=optional_backup_gemini_key_for_rotation
-GEMINI_API_KEY=your_gemini_api_key
+# ============================================================================
+# PROVIDER FAILOVER CHAIN & PRIMARY ENGINE
+# ============================================================================
+PROVIDER_CHAIN=gemini,groq,openai,anthropic
+PRIMARY_PROVIDER=gemini              # gemini | groq | openai | anthropic
 
-# Groq Configuration (Supported & Battle-Tested)
-GROQ_API_KEY1=your_groq_api_key
-
-# Model Selection
+# ============================================================================
+# 1. GOOGLE GEMINI (3 Keys Sequence Rotation)
+# ============================================================================
+GOOGLE_API_KEY1=your_primary_gemini_key
+GOOGLE_API_KEY2=your_secondary_gemini_key
+GOOGLE_API_KEY3=your_tertiary_gemini_key
+# Or comma-separated list:
+# GEMINI_API_KEYS=key1,key2,key3
 GEMINI_MODEL1=gemini-flash-latest
 GEMINI_MODEL2=gemini-2.5-flash
-GROQ_MODEL1=llama-3.3-70b-versatile
-PRIMARY_PROVIDER=gemini              # gemini | groq
 
-# Safety & Limits
+# ============================================================================
+# 2. GROQ (Modern GPT-OSS Models with Multi-Key Sequence)
+# ============================================================================
+GROQ_API_KEY1=your_primary_groq_key
+GROQ_API_KEY2=your_backup_groq_key
+# Or comma-separated list:
+# GROQ_API_KEYS=key1,key2
+GROQ_MODEL1=openai/gpt-oss-120b
+GROQ_MODEL2=openai/gpt-oss-20b
+
+# ============================================================================
+# 3. OPENAI (GPT-4o & GPT-4o-Mini Native REST Integration)
+# ============================================================================
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL1=gpt-4o
+OPENAI_MODEL2=gpt-4o-mini
+
+# ============================================================================
+# 4. ANTHROPIC (Claude 3.5 Sonnet Native Integration)
+# ============================================================================
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL1=claude-3-5-sonnet-20241022
+ANTHROPIC_MODEL2=claude-3-5-haiku-20241022
+
+# ============================================================================
+# SAFETY & EXECUTION LIMITS
+# ============================================================================
 MAX_ATTEMPTS_PER_BUG=3
 MAX_COST_BUDGET_USD=5.00
 SUBPROCESS_TIMEOUT_SECONDS=30

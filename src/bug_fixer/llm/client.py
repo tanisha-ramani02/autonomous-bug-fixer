@@ -1,15 +1,14 @@
-"""Unified LLM client interface with multi-key rotation, model fallback, and token/cost tracking."""
+"""Unified LLM client interface with multi-tier provider failover chain, key rotation, and cost tracking."""
 import json
 import re
 import time
+import random
 from typing import Dict, Any, Optional, List
 import requests
 from bug_fixer.config.settings import settings
 from bug_fixer.config.logger_config import logger
 from bug_fixer.models.state import TokenCostSummary
 
-
-import random
 
 # Model pricing in USD per 1M tokens
 MODEL_PRICING = {
@@ -20,10 +19,18 @@ MODEL_PRICING = {
     "gemini-3.6-flash": {"input_per_m": 0.075, "output_per_m": 0.30},
     "gemini-3.7-flash": {"input_per_m": 0.075, "output_per_m": 0.30},
     "gemini-2.5-pro": {"input_per_m": 1.25, "output_per_m": 5.00},
-    # Groq models
-    "llama-3.3-70b-versatile": {"input_per_m": 0.59, "output_per_m": 0.79},
-    "llama-3.1-8b-instant": {"input_per_m": 0.05, "output_per_m": 0.08},
-    "mixtral-8x7b-32768": {"input_per_m": 0.24, "output_per_m": 0.24},
+    # Groq modern active models (GPT-OSS)
+    "openai/gpt-oss-120b": {"input_per_m": 0.15, "output_per_m": 0.60},
+    "openai/gpt-oss-20b": {"input_per_m": 0.075, "output_per_m": 0.30},
+    "gpt-oss-120b": {"input_per_m": 0.15, "output_per_m": 0.60},
+    "gpt-oss-20b": {"input_per_m": 0.075, "output_per_m": 0.30},
+    # OpenAI models
+    "gpt-4o": {"input_per_m": 2.50, "output_per_m": 10.00},
+    "gpt-4o-mini": {"input_per_m": 0.15, "output_per_m": 0.60},
+    "o3-mini": {"input_per_m": 1.10, "output_per_m": 4.40},
+    # Anthropic models
+    "claude-3-5-sonnet-20241022": {"input_per_m": 3.00, "output_per_m": 15.00},
+    "claude-3-5-haiku-20241022": {"input_per_m": 0.80, "output_per_m": 4.00},
 }
 
 # Ordered fallback models for maximum reliability and speed
@@ -78,15 +85,20 @@ class CircuitBreaker:
 
 
 class LLMClient:
-    """Unified client handling Gemini and Groq API requests with failover key rotation, circuit breaker, and model fallback."""
+    """Unified client handling multi-provider failover chains (Gemini -> Groq -> OpenAI -> Anthropic) with key rotation."""
 
     def __init__(self):
         self.tracker = TokenCostSummary()
         self.gemini_keys = settings.get_gemini_keys()
         self.groq_keys = settings.get_groq_keys()
+        self.openai_keys = settings.get_openai_keys()
+        self.anthropic_keys = settings.get_anthropic_keys()
+        self.provider_chain = settings.get_provider_chain()
         self.circuit_breaker = CircuitBreaker()
         self._gemini_key_idx = 0
         self._groq_key_idx = 0
+        self._openai_key_idx = 0
+        self._anthropic_key_idx = 0
 
     def generate(
         self,
@@ -97,49 +109,50 @@ class LLMClient:
         temperature: float = 0.1
     ) -> str:
         """
-        Generate completion using the active provider, with automatic failover between keys and providers.
+        Generate completion using the active provider chain with automatic multi-key and provider failover.
         """
-        provider = provider or settings.primary_provider
-        
-        # Prefer Groq if explicitly requested or if Groq keys are present and Gemini fails
-        if provider.lower() == "groq" and self.groq_keys:
-            return self._call_groq(
-                prompt=prompt,
-                system_instruction=system_instruction,
-                model=model or settings.groq_model1,
-                temperature=temperature
-            )
-        
-        # Primary: Gemini with automatic model and key fallback
-        if self.gemini_keys:
+        # Determine the order of providers to try
+        target_provider = provider or settings.primary_provider
+        chain = [target_provider] + [p for p in self.provider_chain if p != target_provider]
+
+        last_error = None
+        for prov in chain:
+            prov_lower = prov.lower()
             try:
-                return self._call_gemini(
-                    prompt=prompt,
-                    system_instruction=system_instruction,
-                    model=model or GEMINI_FALLBACK_MODELS[0],
-                    temperature=temperature
-                )
-            except Exception as gemini_err:
-                logger.warning(f"All Gemini attempts failed ({gemini_err}). Trying Groq fallback if available...")
-                if self.groq_keys:
+                if prov_lower == "gemini" and self.gemini_keys:
+                    return self._call_gemini(
+                        prompt=prompt,
+                        system_instruction=system_instruction,
+                        model=model or GEMINI_FALLBACK_MODELS[0],
+                        temperature=temperature
+                    )
+                elif prov_lower == "groq" and self.groq_keys:
                     return self._call_groq(
                         prompt=prompt,
                         system_instruction=system_instruction,
-                        model=settings.groq_model1,
+                        model=model or settings.groq_model1,
                         temperature=temperature
                     )
-                raise gemini_err
+                elif prov_lower == "openai" and self.openai_keys:
+                    return self._call_openai(
+                        prompt=prompt,
+                        system_instruction=system_instruction,
+                        model=model or settings.openai_model1,
+                        temperature=temperature
+                    )
+                elif prov_lower == "anthropic" and self.anthropic_keys:
+                    return self._call_anthropic(
+                        prompt=prompt,
+                        system_instruction=system_instruction,
+                        model=model or settings.anthropic_model1,
+                        temperature=temperature
+                    )
+            except Exception as err:
+                last_error = err
+                logger.warning(f"Provider {prov_lower.upper()} failover triggered ({err}). Advancing to next provider in chain...")
+                continue
 
-        # Fallback to Groq
-        if self.groq_keys:
-            return self._call_groq(
-                prompt=prompt,
-                system_instruction=system_instruction,
-                model=model or settings.groq_model1,
-                temperature=temperature
-            )
-
-        raise ValueError("No valid API keys found in .env (set GOOGLE_API_KEY1 or GROQ_API_KEY1)")
+        raise RuntimeError(f"All configured providers and keys failed. Last error: {last_error}")
 
     def _call_gemini(
         self,
@@ -219,10 +232,10 @@ class LLMClient:
         self,
         prompt: str,
         system_instruction: Optional[str] = None,
-        model: str = "llama-3.3-70b-versatile",
+        model: str = "openai/gpt-oss-120b",
         temperature: float = 0.1
     ) -> str:
-        """Call Groq API with key rotation."""
+        """Call Groq API with modern GPT-OSS models and key rotation."""
         if not self.groq_keys:
             raise ValueError("No Groq API keys configured in .env.")
 
@@ -277,9 +290,130 @@ class LLMClient:
 
         raise RuntimeError(f"All Groq keys failed. Last error: {last_error}")
 
+    def _call_openai(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        model: str = "gpt-4o",
+        temperature: float = 0.1
+    ) -> str:
+        """Call OpenAI API with key rotation."""
+        if not self.openai_keys:
+            raise ValueError("No OpenAI API keys configured in .env.")
+
+        last_error = None
+        for _ in range(len(self.openai_keys)):
+            current_key = self.openai_keys[self._openai_key_idx]
+            url = "https://api.openai.com/v1/chat/completions"
+            logger.debug(f"Invoking OpenAI API: model={model}, key_index={self._openai_key_idx}")
+
+            messages = []
+            if system_instruction:
+                messages.append({"role": "system", "content": system_instruction})
+            messages.append({"role": "user", "content": prompt})
+
+            payload = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": 4096
+            }
+            headers = {
+                "Authorization": f"Bearer {current_key}",
+                "Content-Type": "application/json"
+            }
+
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=25)
+                if response.status_code == 200:
+                    self.circuit_breaker.record_success()
+                    data = response.json()
+                    text_out = data["choices"][0]["message"]["content"]
+
+                    usage = data.get("usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", len(prompt.split()) * 2)
+                    comp_tokens = usage.get("completion_tokens", len(text_out.split()) * 2)
+
+                    cost = self._calculate_cost(model, prompt_tokens, comp_tokens)
+                    self.tracker.add_usage(prompt_tokens, comp_tokens, cost)
+                    logger.debug(f"OpenAI response received ({model}): {prompt_tokens} prompt / {comp_tokens} comp tokens (${cost:.5f})")
+                    return text_out
+                else:
+                    self.circuit_breaker.record_failure()
+                    last_error = f"OpenAI HTTP {response.status_code}: {response.text[:200]}"
+                    logger.warning(f"OpenAI API returned {response.status_code}. Rotating key...")
+                    self._openai_key_idx = (self._openai_key_idx + 1) % len(self.openai_keys)
+            except Exception as e:
+                self.circuit_breaker.record_failure()
+                last_error = str(e)
+                logger.warning(f"OpenAI request exception on key #{self._openai_key_idx}: {e}")
+                self._openai_key_idx = (self._openai_key_idx + 1) % len(self.openai_keys)
+
+        raise RuntimeError(f"All OpenAI keys failed. Last error: {last_error}")
+
+    def _call_anthropic(
+        self,
+        prompt: str,
+        system_instruction: Optional[str] = None,
+        model: str = "claude-3-5-sonnet-20241022",
+        temperature: float = 0.1
+    ) -> str:
+        """Call Anthropic API with key rotation."""
+        if not self.anthropic_keys:
+            raise ValueError("No Anthropic API keys configured in .env.")
+
+        last_error = None
+        for _ in range(len(self.anthropic_keys)):
+            current_key = self.anthropic_keys[self._anthropic_key_idx]
+            url = "https://api.anthropic.com/v1/messages"
+            logger.debug(f"Invoking Anthropic API: model={model}, key_index={self._anthropic_key_idx}")
+
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 4096,
+                "temperature": temperature
+            }
+            if system_instruction:
+                payload["system"] = system_instruction
+
+            headers = {
+                "x-api-key": current_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json"
+            }
+
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=30)
+                if response.status_code == 200:
+                    self.circuit_breaker.record_success()
+                    data = response.json()
+                    text_out = data["content"][0]["text"]
+
+                    usage = data.get("usage", {})
+                    prompt_tokens = usage.get("input_tokens", len(prompt.split()) * 2)
+                    comp_tokens = usage.get("output_tokens", len(text_out.split()) * 2)
+
+                    cost = self._calculate_cost(model, prompt_tokens, comp_tokens)
+                    self.tracker.add_usage(prompt_tokens, comp_tokens, cost)
+                    logger.debug(f"Anthropic response received ({model}): {prompt_tokens} prompt / {comp_tokens} comp tokens (${cost:.5f})")
+                    return text_out
+                else:
+                    self.circuit_breaker.record_failure()
+                    last_error = f"Anthropic HTTP {response.status_code}: {response.text[:200]}"
+                    logger.warning(f"Anthropic API returned {response.status_code}. Rotating key...")
+                    self._anthropic_key_idx = (self._anthropic_key_idx + 1) % len(self.anthropic_keys)
+            except Exception as e:
+                self.circuit_breaker.record_failure()
+                last_error = str(e)
+                logger.warning(f"Anthropic request exception on key #{self._anthropic_key_idx}: {e}")
+                self._anthropic_key_idx = (self._anthropic_key_idx + 1) % len(self.anthropic_keys)
+
+        raise RuntimeError(f"All Anthropic keys failed. Last error: {last_error}")
+
     def _calculate_cost(self, model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate USD cost for a single invocation based on token counts."""
-        pricing = MODEL_PRICING.get(model, {"input_per_m": 0.05, "output_per_m": 0.20})
+        pricing = MODEL_PRICING.get(model, {"input_per_m": 0.075, "output_per_m": 0.30})
         cost = (prompt_tokens / 1_000_000 * pricing["input_per_m"]) + (
             completion_tokens / 1_000_000 * pricing["output_per_m"]
         )
@@ -312,7 +446,6 @@ class LLMClient:
 
         # 4. Field-by-field regex fallback for code snippets with unescaped quotes
         extracted = {}
-        # Try finding key-value pairs
         for key in ["target_file", "original_snippet", "replacement_snippet", "confidence_score", "rationale", "hypothesis", "root_cause_file", "root_cause_symbol", "explanation", "proposed_strategy"]:
             key_pattern = rf'"{key}"\s*:\s*(?:"(.*?)(?:"\s*,\s*"\w+"|\s*"\s*}}|\s*}})|([0-9.]+)|"(.*?)"\s*(?:,|\n|}}))'
             m = re.search(key_pattern, text, re.DOTALL)

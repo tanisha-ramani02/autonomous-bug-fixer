@@ -310,9 +310,13 @@ def test_llm_cost_calculation_exact_formulas():
     cost_lite = client._calculate_cost("gemini-3.1-flash-lite", prompt_tokens=1_000_000, completion_tokens=1_000_000)
     assert round(cost_lite, 4) == 0.25
 
-    # llama-3.3-70b-versatile: $0.59 per 1M in, $0.79 per 1M out
-    cost_groq = client._calculate_cost("llama-3.3-70b-versatile", prompt_tokens=1_000_000, completion_tokens=1_000_000)
-    assert round(cost_groq, 4) == 1.38
+    # openai/gpt-oss-120b: $0.15 per 1M in, $0.60 per 1M out -> $0.75
+    cost_groq = client._calculate_cost("openai/gpt-oss-120b", prompt_tokens=1_000_000, completion_tokens=1_000_000)
+    assert round(cost_groq, 4) == 0.75
+
+    # gpt-4o: $2.50 per 1M in, $10.00 per 1M out -> $12.50
+    cost_openai = client._calculate_cost("gpt-4o", prompt_tokens=1_000_000, completion_tokens=1_000_000)
+    assert round(cost_openai, 4) == 12.50
 
 
 # ============================================================================
