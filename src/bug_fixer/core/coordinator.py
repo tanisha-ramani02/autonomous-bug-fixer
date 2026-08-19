@@ -208,7 +208,7 @@ class Coordinator:
                     # Fix failed or introduced regressions -> Rollback cleanly
                     self.logger.log_rollback(err_msg or "Verification failed")
                     if self.git_manager.is_git_repo():
-                        self.git_manager.rollback()
+                        self.git_manager.rollback(target_file=patch.target_file)
                     else:
                         self.patcher.restore_backup(patch.target_file)
 

@@ -19,19 +19,36 @@ class GitManager:
         """Get git status output."""
         return self._run_git(["status", "--short"])
 
-    def rollback(self) -> Tuple[bool, str]:
+    def rollback(self, target_file: Optional[str] = None) -> Tuple[bool, str]:
         """
-        Atomically rollback any uncommitted modifications in the target repository.
+        Atomically and safely rollback modifications in the target repository.
+        If target_file is specified, restores only that file without touching unrelated untracked files.
         """
         if not self._is_git:
             logger.warning(f"Cannot rollback: {self.repo_path} is not a git repository")
             return False, "Not a git repository"
-        
-        # Discard working tree changes
-        out1 = self._run_git(["checkout", "--", "."])
-        out2 = self._run_git(["clean", "-fd"])
-        logger.info(f"Git rollback executed in {self.repo_path}: {out1} {out2}")
-        return True, f"Working tree restored cleanly. {out1} {out2}".strip()
+
+        if target_file:
+            # Restore specific targeted file safely
+            norm_target = os.path.normpath(target_file)
+            out = self._run_git(["checkout", "--", norm_target])
+            # If target file was newly created and untracked, remove only that file
+            full_path = os.path.join(self.repo_path, norm_target)
+            if not out and os.path.exists(full_path):
+                # Check if it was untracked
+                status = self._run_git(["status", "--porcelain", norm_target])
+                if status.startswith("??"):
+                    try:
+                        os.remove(full_path)
+                    except OSError:
+                        pass
+            logger.info(f"Targeted Git rollback executed for {target_file}: {out}")
+            return True, f"File {target_file} restored cleanly. {out}".strip()
+        else:
+            # Revert all working tree modifications cleanly without destructive indiscriminate delete
+            out = self._run_git(["checkout", "--", "."])
+            logger.info(f"Git working tree rollback executed in {self.repo_path}: {out}")
+            return True, f"Working tree restored cleanly. {out}".strip()
 
     def commit_fix(self, message: str) -> Tuple[bool, str]:
         """Stage all modifications and commit them."""

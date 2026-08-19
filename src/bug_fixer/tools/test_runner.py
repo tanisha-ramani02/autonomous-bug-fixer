@@ -67,14 +67,24 @@ class TestRunner:
         """Parse pytest console output into structured TestSuiteReport and TestCaseResults."""
         results: List[TestCaseResult] = []
         
-        # Parse test lines e.g.:
-        # tests/test_catalog.py::test_pagination_odd_items_total_pages FAILED
-        # tests/test_catalog.py::test_discount_tiers PASSED
-        test_line_regex = re.compile(r"^(tests[/\\][^\s:]+\.py::\S+)\s+(PASSED|FAILED|ERROR|SKIPPED)", re.MULTILINE)
+        # Support both verbose (tests/test_foo.py::test_bar FAILED) and summary (FAILED tests/test_foo.py::test_bar)
+        test_line_regex = re.compile(
+            r"^(?:(tests[/\\][^\s:]+\.py::\S+)\s+(PASSED|FAILED|ERROR|SKIPPED)|(FAILED|ERROR|PASSED)\s+(tests[/\\][^\s:]+\.py::\S+))",
+            re.MULTILINE
+        )
         
+        seen_test_ids = set()
         for match in test_line_regex.finditer(stdout):
-            test_id = match.group(1).replace("\\", "/")
-            status_str = match.group(2).lower()
+            if match.group(1):
+                test_id = match.group(1).replace("\\", "/")
+                status_str = match.group(2).lower()
+            else:
+                status_str = match.group(3).lower()
+                test_id = match.group(4).replace("\\", "/")
+
+            if test_id in seen_test_ids:
+                continue
+            seen_test_ids.add(test_id)
             
             # Extract specific failure snippet for this test if failed
             tb = ""

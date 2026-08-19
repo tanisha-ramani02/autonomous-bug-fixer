@@ -6,14 +6,19 @@ from datetime import datetime
 from loguru import logger
 
 # Regex to sanitize sensitive API keys from logs
-SECRET_PATTERN = re.compile(r"(sk-[a-zA-Z0-9_-]{10,}|AQ\.[a-zA-Z0-9_-]{10,}|gsk_[a-zA-Z0-9_-]{10,})")
+SECRET_PATTERN = re.compile(r"(sk-[a-zA-Z0-9_-]{10,}|AIzaSy[a-zA-Z0-9_-]{20,}|gsk_[a-zA-Z0-9_-]{10,})")
+
+
+def mask_secrets(text: str) -> str:
+    """Mask sensitive API keys in arbitrary text strings."""
+    return SECRET_PATTERN.sub("[MASKED_API_KEY]", text)
 
 
 def sanitize_secrets(record: dict) -> bool:
     """Filter to mask API keys and secrets from log messages."""
     msg = record["message"]
     if SECRET_PATTERN.search(msg):
-        record["message"] = SECRET_PATTERN.sub("[MASKED_API_KEY]", msg)
+        record["message"] = mask_secrets(msg)
     return True
 
 
