@@ -10,12 +10,14 @@ wheels/
 .venv/
 .pytest_cache/
 
-# Environment secrets
+# Environment secrets (ignore secrets, but track .env.example)
 .env
-.env*
-*.env
-*.env*
+.env.local
+.env.*.local
+.env copy
+!.env.example
+!example.env
 
-# Application logs (run_trace.json can be kept or excluded)
+# Application logs
 logs/
 *.log
