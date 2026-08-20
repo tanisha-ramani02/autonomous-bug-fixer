@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Virtual environments & caches
+.venv/
+.pytest_cache/
+
+# Environment secrets
+.env
+.env*
+*.env
+*.env*
+
+# Application logs (run_trace.json can be kept or excluded)
+logs/
+*.log
