@@ -12,7 +12,8 @@ Rules:
 2. Preserve existing variable names, function signatures, and unrelated behavior.
 3. Ensure the replacement snippet is valid Python syntax and exact match to the original code in the file.
 4. For dictionary keys (e.g. headers, addresses), support standard casing robustly (e.g. check both "Authorization" and "authorization", or use case-insensitive dict lookup).
-5. Output your response strictly in the requested JSON format.
+5. If the failure is an AssertionError comparing specific string constants (e.g. CORS headers, status messages, JSON keys), ensure the replacement precisely matches the expected contract value.
+6. Output your response strictly in the requested JSON format.
 """
 
 CODER_USER_PROMPT = """You need to patch the file `{target_file}` to fix the following diagnosed issue:
@@ -21,6 +22,9 @@ CODER_USER_PROMPT = """You need to patch the file `{target_file}` to fix the fol
 - **Hypothesis**: {hypothesis}
 - **Explanation**: {explanation}
 - **Proposed Strategy**: {proposed_strategy}
+
+### Failing Test & Assertion Context:
+{test_context}
 
 ### Current Full Content of `{target_file}`:
 ```python
@@ -56,14 +60,16 @@ class Coder:
         self,
         diagnosis: RootCauseAnalysis,
         target_file_content: str,
-        prior_attempts_info: str = "None"
+        prior_attempts_info: str = "None",
+        test_context_info: str = "None"
     ) -> PatchCandidate:
-        """Generate a PatchCandidate based on the diagnosis and current file content."""
+        """Generate a PatchCandidate based on the diagnosis, test assertions, and current file content."""
         prompt = CODER_USER_PROMPT.format(
             target_file=diagnosis.root_cause_file,
             hypothesis=diagnosis.hypothesis,
             explanation=diagnosis.explanation,
             proposed_strategy=diagnosis.proposed_strategy,
+            test_context=test_context_info,
             file_content=target_file_content,
             prior_attempts=prior_attempts_info
         )

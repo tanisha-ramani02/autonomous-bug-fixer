@@ -89,135 +89,155 @@ class Coordinator:
 
         resolved_count = 0
         unresolved_count = 0
+        max_convergence_cycles = 3
 
-        # 2. Iterate through each detected failing test
-        for bug_idx, failure in enumerate(failing_tests, 1):
-            self.logger.log_bug_start(bug_idx, len(failing_tests), failure.test_id)
-            
-            # Check cost budget
-            if self.llm_client.tracker.total_cost_usd >= self.max_cost:
-                logger.warning(f"Budget limit of ${self.max_cost:.2f} reached. Halting investigation.")
-                self.logger.console.print(f"[bold red]Budget limit of ${self.max_cost:.2f} reached. Halting.[/bold red]")
-                unresolved_count += (len(failing_tests) - bug_idx + 1)
+        # 2. Convergence Multi-Pass Loop
+        for cycle in range(1, max_convergence_cycles + 1):
+            current_report = self.test_runner.run_all_tests()
+            if current_report.is_all_passed:
+                logger.info(f"Convergence achieved on cycle {cycle}. All tests passing!")
                 break
 
-            bug_resolved = False
-            prior_attempts_summary: List[str] = []
+            failing_tests = [r for r in current_report.results if r.status in ["failed", "error"]]
+            initial_passing_ids = [r.test_id for r in current_report.results if r.status == "passed"]
 
-            for attempt_num in range(1, self.max_attempts + 1):
-                logger.info(f"Processing bug [{bug_idx}/{len(failing_tests)}] {failure.test_id} - Attempt {attempt_num}/{self.max_attempts}")
-                self.logger.console.print(f"\n[bold cyan]Attempt {attempt_num}/{self.max_attempts} for:[/bold cyan] {failure.test_id}")
+            if cycle > 1:
+                self.logger.console.print(f"\n[bold magenta]═══ Starting Convergence Cycle {cycle}/{max_convergence_cycles} ({len(failing_tests)} remaining failures) ═══[/bold magenta]")
+                logger.info(f"Starting Convergence Cycle {cycle}/{max_convergence_cycles} with {len(failing_tests)} failures")
+
+            for bug_idx, failure in enumerate(failing_tests, 1):
+                self.logger.log_bug_start(bug_idx, len(failing_tests), failure.test_id)
                 
-                # Check budget
+                # Check cost budget
                 if self.llm_client.tracker.total_cost_usd >= self.max_cost:
-                    logger.warning("Cost budget exceeded mid-attempt.")
-                    self.logger.console.print(f"[bold red]Budget limit exceeded.[/bold red]")
+                    logger.warning(f"Budget limit of ${self.max_cost:.2f} reached. Halting investigation.")
+                    self.logger.console.print(f"[bold red]Budget limit of ${self.max_cost:.2f} reached. Halting.[/bold red]")
                     break
 
-                # A. Inspect Code Context
-                code_context = self.inspector.get_test_and_source_context(
-                    test_file=failure.test_id.split("::")[0],
-                    test_id=failure.test_id,
-                    traceback_str=failure.traceback or ""
-                )
-                logger.debug(f"Retrieved code context: test_file={code_context.get('test_file')}, suspected_sources={list(code_context.get('suspected_source_files', {}).keys())}")
+                bug_resolved = False
+                prior_attempts_summary: List[str] = []
 
-                # B. Diagnose Root Cause
-                prior_info_str = "\n".join(prior_attempts_summary) if prior_attempts_summary else "None"
-                try:
-                    diagnosis = self.diagnostician.diagnose(
-                        failure=failure,
-                        code_context=code_context,
-                        prior_attempts_info=prior_info_str
+                for attempt_num in range(1, self.max_attempts + 1):
+                    logger.info(f"Processing bug [{bug_idx}/{len(failing_tests)}] {failure.test_id} - Attempt {attempt_num}/{self.max_attempts}")
+                    self.logger.console.print(f"\n[bold cyan]Attempt {attempt_num}/{self.max_attempts} for:[/bold cyan] {failure.test_id}")
+                    
+                    # Check budget
+                    if self.llm_client.tracker.total_cost_usd >= self.max_cost:
+                        logger.warning("Cost budget exceeded mid-attempt.")
+                        self.logger.console.print(f"[bold red]Budget limit exceeded.[/bold red]")
+                        break
+
+                    # A. Inspect Code Context
+                    code_context = self.inspector.get_test_and_source_context(
+                        test_file=failure.test_id.split("::")[0],
+                        test_id=failure.test_id,
+                        traceback_str=failure.traceback or ""
                     )
-                    self.logger.log_diagnosis(diagnosis)
-                except Exception as e:
-                    self.logger.console.print(f"[red]Diagnosis generation error: {e}[/red]")
-                    continue
+                    logger.debug(f"Retrieved code context: test_file={code_context.get('test_file')}, suspected_sources={list(code_context.get('suspected_source_files', {}).keys())}")
 
-                # C. Read target file content
-                try:
-                    target_file_content = self.inspector.read_file(diagnosis.root_cause_file)
-                except Exception as e:
-                    self.logger.console.print(f"[red]Could not read target file {diagnosis.root_cause_file}: {e}[/red]")
-                    continue
+                    # B. Diagnose Root Cause
+                    prior_info_str = "\n".join(prior_attempts_summary) if prior_attempts_summary else "None"
+                    try:
+                        diagnosis = self.diagnostician.diagnose(
+                            failure=failure,
+                            code_context=code_context,
+                            prior_attempts_info=prior_info_str
+                        )
+                        self.logger.log_diagnosis(diagnosis)
+                    except Exception as e:
+                        self.logger.console.print(f"[red]Diagnosis generation error: {e}[/red]")
+                        continue
 
-                # D. Generate Candidate Patch
-                try:
-                    patch = self.coder.generate_patch(
+                    # C. Read target file content
+                    try:
+                        target_file_content = self.inspector.read_file(diagnosis.root_cause_file)
+                    except Exception as e:
+                        self.logger.console.print(f"[red]Could not read target file {diagnosis.root_cause_file}: {e}[/red]")
+                        continue
+
+                    # D. Generate Candidate Patch with Exact Test Assertion Visibility
+                    test_ctx_str = (
+                        f"Test File: {code_context.get('test_file')}\n"
+                        f"```python\n{code_context.get('test_code', '')}\n```\n"
+                        f"Assertion Error: {failure.message or ''}\n"
+                        f"Traceback:\n{failure.traceback or ''}"
+                    )
+                    try:
+                        patch = self.coder.generate_patch(
+                            diagnosis=diagnosis,
+                            target_file_content=target_file_content,
+                            prior_attempts_info=prior_info_str,
+                            test_context_info=test_ctx_str
+                        )
+                    except Exception as e:
+                        self.logger.console.print(f"[red]Patch generation error: {e}[/red]")
+                        continue
+
+                    # E. Apply Patch with Pre-Validation
+                    apply_ok, apply_msg, diff_str = self.patcher.apply_replacement(
+                        target_file=patch.target_file,
+                        original_snippet=patch.original_snippet,
+                        replacement_snippet=patch.replacement_snippet
+                    )
+                    
+                    # If snippet replacement failed, try full replacement if needed
+                    if not apply_ok:
+                        self.logger.console.print(f"[yellow]Snippet replacement notice: {apply_msg}. Trying full block replacement...[/yellow]")
+                        new_full = target_file_content.replace(patch.original_snippet.strip(), patch.replacement_snippet.strip())
+                        if new_full != target_file_content:
+                            apply_ok, apply_msg, diff_str = self.patcher.apply_full_file(patch.target_file, new_full)
+
+                    if not apply_ok:
+                        self.logger.console.print(f"[red]Patch application failed: {apply_msg}[/red]")
+                        prior_attempts_summary.append(f"Attempt {attempt_num}: Patch application failed - {apply_msg}")
+                        continue
+
+                    patch.diff = diff_str
+                    self.logger.log_patch_candidate(patch, diff_str)
+
+                    # F. Verify Patch (Dual-Stage)
+                    target_pass, no_regressions, regressions, report, err_msg = self.verifier.verify_patch(
+                        target_test_id=failure.test_id,
+                        initial_passing_tests=initial_passing_ids
+                    )
+
+                    attempt_record = FixAttempt(
+                        bug_id=failure.test_id,
+                        attempt_number=attempt_num,
                         diagnosis=diagnosis,
-                        target_file_content=target_file_content,
-                        prior_attempts_info=prior_info_str
+                        patch=patch,
+                        target_test_passed=target_pass,
+                        full_suite_passed=no_regressions,
+                        regressions=regressions,
+                        error_message=err_msg
                     )
-                except Exception as e:
-                    self.logger.console.print(f"[red]Patch generation error: {e}[/red]")
-                    continue
+                    trace.attempts.append(attempt_record)
+                    self.logger.log_attempt_result(attempt_record)
 
-                # E. Apply Patch with Pre-Validation
-                apply_ok, apply_msg, diff_str = self.patcher.apply_replacement(
-                    target_file=patch.target_file,
-                    original_snippet=patch.original_snippet,
-                    replacement_snippet=patch.replacement_snippet
-                )
-                
-                # If snippet replacement failed, try full replacement if needed
-                if not apply_ok:
-                    self.logger.console.print(f"[yellow]Snippet replacement notice: {apply_msg}. Trying full block replacement...[/yellow]")
-                    # Replace in content and apply full
-                    new_full = target_file_content.replace(patch.original_snippet.strip(), patch.replacement_snippet.strip())
-                    if new_full != target_file_content:
-                        apply_ok, apply_msg, diff_str = self.patcher.apply_full_file(patch.target_file, new_full)
-
-                if not apply_ok:
-                    self.logger.console.print(f"[red]Patch application failed: {apply_msg}[/red]")
-                    prior_attempts_summary.append(f"Attempt {attempt_num}: Patch application failed - {apply_msg}")
-                    continue
-
-                patch.diff = diff_str
-                self.logger.log_patch_candidate(patch, diff_str)
-
-                # F. Verify Patch (Dual-Stage)
-                target_pass, no_regressions, regressions, report, err_msg = self.verifier.verify_patch(
-                    target_test_id=failure.test_id,
-                    initial_passing_tests=initial_passing_ids
-                )
-
-                attempt_record = FixAttempt(
-                    bug_id=failure.test_id,
-                    attempt_number=attempt_num,
-                    diagnosis=diagnosis,
-                    patch=patch,
-                    target_test_passed=target_pass,
-                    full_suite_passed=no_regressions,
-                    regressions=regressions,
-                    error_message=err_msg
-                )
-                trace.attempts.append(attempt_record)
-                self.logger.log_attempt_result(attempt_record)
-
-                if target_pass and no_regressions:
-                    # Fix succeeded without regressions!
-                    bug_resolved = True
-                    resolved_count += 1
-                    if settings.auto_git_rollback and self.git_manager.is_git_repo():
-                        self.git_manager.commit_fix(f"fix(auto): resolve {failure.test_id}")
-                    # Update initial_passing_ids to include newly passing test
-                    initial_passing_ids.append(failure.test_id)
-                    break
-                else:
-                    # Fix failed or introduced regressions -> Rollback cleanly
-                    self.logger.log_rollback(err_msg or "Verification failed")
-                    if self.git_manager.is_git_repo():
-                        self.git_manager.rollback(target_file=patch.target_file)
+                    if target_pass and no_regressions:
+                        # Fix succeeded without regressions!
+                        bug_resolved = True
+                        resolved_count += 1
+                        if settings.auto_git_rollback and self.git_manager.is_git_repo():
+                            self.git_manager.commit_fix(f"fix(auto): resolve {failure.test_id}")
+                        initial_passing_ids.append(failure.test_id)
+                        break
                     else:
-                        self.patcher.restore_backup(patch.target_file)
+                        # Fix failed or introduced regressions -> Rollback cleanly
+                        self.logger.log_rollback(err_msg or "Verification failed")
+                        if self.git_manager.is_git_repo():
+                            self.git_manager.rollback(target_file=patch.target_file)
+                        else:
+                            self.patcher.restore_backup(patch.target_file)
 
-                    prior_attempts_summary.append(
-                        f"Attempt {attempt_num} Failed: target_passed={target_pass}, no_regressions={no_regressions}, error={err_msg}"
-                    )
+                        prior_attempts_summary.append(
+                            f"Attempt {attempt_num} Failed: target_passed={target_pass}, no_regressions={no_regressions}, error={err_msg}"
+                        )
 
-            if not bug_resolved:
-                unresolved_count += 1
+            # Check if all tests pass after cycle
+            check_report = self.test_runner.run_all_tests()
+            if check_report.is_all_passed:
+                break
 
         # 3. Final Test Suite Run
         final_report = self.test_runner.run_all_tests()

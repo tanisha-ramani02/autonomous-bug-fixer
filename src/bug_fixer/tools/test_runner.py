@@ -26,7 +26,19 @@ class TestRunner:
 
     def _run_pytest(self, extra_args: List[str]) -> TestSuiteReport:
         """Invoke pytest via subprocess in the target repository directory."""
-        cmd = ["uv", "run", "pytest", "-v", "--tb=short"] + extra_args
+        # Prefer direct venv pytest executable to avoid shell wrapper process tree freezes
+        venv_win = os.path.join(self.repo_path, ".venv", "Scripts", "pytest.exe")
+        venv_nix = os.path.join(self.repo_path, ".venv", "bin", "pytest")
+        if os.path.exists(venv_win):
+            cmd = [venv_win, "-v", "--tb=short"] + extra_args
+            use_shell = False
+        elif os.path.exists(venv_nix):
+            cmd = [venv_nix, "-v", "--tb=short"] + extra_args
+            use_shell = False
+        else:
+            cmd = ["uv", "run", "pytest", "-v", "--tb=short"] + extra_args
+            use_shell = True
+
         sub_env = os.environ.copy()
         sub_env.pop("VIRTUAL_ENV", None)
         
@@ -40,7 +52,7 @@ class TestRunner:
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=self.timeout_seconds,
-                shell=True
+                shell=use_shell
             )
             duration = time.time() - start_time
             stdout = process.stdout
